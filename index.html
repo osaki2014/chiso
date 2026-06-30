@@ -13,7 +13,7 @@
 
   </style>
   <style>
-    main{padding-top:34px}.edit-head{display:grid;grid-template-columns:1fr 92px;gap:10px;padding:0 18px 9px;font:9px "DM Mono";color:var(--muted);text-transform:uppercase}.layer-edit{display:grid;grid-template-columns:1fr 92px;align-items:center;gap:10px;width:100%}.layer-edit input[type="number"]{width:72px;border:1px solid var(--line);background:var(--paper);padding:6px 7px;font:10px "DM Mono"}.detail{height:auto!important}.detail-copy{min-width:0;flex:1}.detail-copy p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.column-layer{align-self:center;transition:height .3s}.borehole-content{grid-template-columns:52px 130px 1fr}.layer-details-wrap{min-width:0}.model-status{font:9px "DM Mono";color:var(--muted);margin:0 0 8px 18px}@media(max-width:700px){.edit-head{display:none}.layer-edit{grid-template-columns:1fr 75px}.borehole-content{grid-template-columns:42px 88px 1fr}}
+    main{padding-top:34px}.edit-head{display:grid;grid-template-columns:1fr 92px;gap:10px;padding:0 18px 9px;font:9px "DM Mono";color:var(--muted);text-transform:uppercase}.layer-edit{display:grid;grid-template-columns:1fr 92px;align-items:center;gap:10px;width:100%}.layer-edit input[type="number"]{width:72px;border:1px solid var(--line);background:var(--paper);padding:6px 7px;font:10px "DM Mono"}.detail{height:auto!important}.detail-copy{min-width:0;flex:1}.detail-copy p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.column-layer{align-self:center;width:100%;transition:height .3s}.borehole-content{grid-template-columns:58px 190px 1fr}.layer-details-wrap{min-width:0}.model-status{font:9px "DM Mono";color:var(--muted);margin:0 0 8px 18px}.site-tabs{display:flex;gap:5px}.site-tab{border:1px solid var(--line);background:transparent;padding:7px 12px;font:10px "DM Mono";cursor:pointer}.site-tab.active{background:var(--orange);border-color:var(--orange);color:white}.site-marker{width:28px;height:28px;border:2px solid white;border-radius:50%;background:var(--orange);box-shadow:0 0 0 2px var(--orange),0 4px 12px #0004;color:white;font:600 11px "DM Mono";display:grid;place-items:center}.site-marker.inactive{background:#596d87;box-shadow:0 0 0 2px #596d87,0 4px 12px #0004}@media(max-width:700px){.edit-head{display:none}.layer-edit{grid-template-columns:1fr 75px}.borehole-content{grid-template-columns:42px 140px 1fr}}
   </style>
 </head>
 <body>
@@ -54,17 +54,17 @@
 
     <section class="data-section">
       <article class="borehole-card">
-        <div class="section-title"><div><span class="number">03</span><h2>クリック地点の地質柱状図</h2></div><span id="elevation" class="elevation">標高 — m</span></div>
+        <div class="section-title"><div><span class="number">03</span><h2 id="borehole-title">A地点の地質柱状図</h2></div><div class="site-tabs"><button class="site-tab active" data-site="0">A地点</button><button class="site-tab" data-site="1">B地点</button><button class="site-tab" data-site="2">C地点</button></div><span id="elevation" class="elevation">標高 — m</span></div>
         <div class="borehole-content">
           <div id="depth-axis" class="depth-axis"></div>
           <div id="column" class="column"></div>
-          <div class="layer-details-wrap"><p class="model-status">値を変更すると柱状図の総深度と3D地層へ反映されます</p><div class="edit-head"><span>地層</span><span>深さ m</span></div><div id="layer-details" class="layer-details"></div></div>
+          <div class="layer-details-wrap"><p class="model-status">選択地点を地図でクリック。3地点間の地層境界は線形補間されます</p><div class="edit-head"><span>地層</span><span>深さ m</span></div><div id="layer-details" class="layer-details"></div></div>
         </div>
       </article>
       <aside class="about-card">
         <p class="eyebrow">MODEL NOTES</p>
         <h3>地下の形を、仮説として見る。</h3>
-        <p>地形と標高は国土地理院の数値標高モデルを使用。赤い地点の地表面を深度0mとして、入力した各層の深さで水平に分割しています。</p>
+        <p>地形と標高は国土地理院の数値標高モデルを使用。A・B・C地点の柱状図を基準に、各地層境界を地点間で線形補間しています。</p>
         <div class="legend-note"><b>凡例</b><span>色は柱状図と3Dで共通です</span></div>
         <a href="https://maps.gsi.go.jp/#15/34.425756/134.060741/&base=std&ls=std&disp=1" target="_blank" rel="noreferrer">地理院地図で開く ↗</a>
       </aside>
@@ -85,18 +85,24 @@ const layers=[
   {id:'C',name:'凝灰岩層',desc:'風化凝灰岩',color:'#72a89b',base:14,width:100},
   {id:'D',name:'基盤岩',desc:'花崗岩類',color:'#596d87',base:16,width:100}
 ];
-let selected={...START}, terrain, strataGroup, pin, elevationAtPoint=0, regionFrame;
+const sites=[
+  {id:'A',lat:START.lat,lng:START.lng,depths:[8,12,14,16]},
+  {id:'B',lat:START.lat+.0035,lng:START.lng-.003,depths:[6,15,11,20]},
+  {id:'C',lat:START.lat-.0035,lng:START.lng+.003,depths:[10,9,18,13]}
+];
+let activeSite=0,selected=sites[0],terrain,strataGroup,pin,elevationAtPoint=0,regionFrame,markers=[];
 
 const map=L.map('map',{zoomControl:false,attributionControl:true}).setView([START.lat,START.lng],START.zoom);
 L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/">国土地理院</a>'}).addTo(map);
 L.control.zoom({position:'bottomright'}).addTo(map);
-const icon=L.divIcon({className:'',html:'<div class="survey-marker"></div>',iconSize:[22,22],iconAnchor:[11,11]});
-const marker=L.marker([START.lat,START.lng],{icon}).addTo(map);
+function siteIcon(i){return L.divIcon({className:'',html:`<div class="site-marker ${i===activeSite?'':'inactive'}">${sites[i].id}</div>`,iconSize:[28,28],iconAnchor:[14,14]})}
+sites.forEach((s,i)=>markers.push(L.marker([s.lat,s.lng],{icon:siteIcon(i)}).addTo(map)));
+function refreshMarkers(){markers.forEach((m,i)=>m.setIcon(siteIcon(i)))}
 function updateRegionFrame(){const size=map.getSize(),c=L.point(size.x/2,size.y/2),half=256,bounds=L.latLngBounds(map.containerPointToLatLng([c.x-half,c.y+half]),map.containerPointToLatLng([c.x+half,c.y-half]));if(regionFrame)regionFrame.setBounds(bounds);else regionFrame=L.rectangle(bounds,{color:'#df6a3a',weight:2,opacity:.95,fillColor:'#df6a3a',fillOpacity:.035,dashArray:'7 5',interactive:false}).addTo(map)}
-map.on('click',e=>{selected={lat:e.latlng.lat,lng:e.latlng.lng};marker.setLatLng(e.latlng);const d=terrain?.userData,inRange=d&&e.latlng.lat<=d.nw.lat&&e.latlng.lat>=d.se.lat&&e.latlng.lng>=d.nw.lng&&e.latlng.lng<=d.se.lng;if(inRange)rebuildAtSelection();else map.panTo(e.latlng)});
+map.on('click',e=>{sites[activeSite].lat=e.latlng.lat;sites[activeSite].lng=e.latlng.lng;selected=sites[activeSite];markers[activeSite].setLatLng(e.latlng);const d=terrain?.userData,inRange=d&&e.latlng.lat<=d.nw.lat&&e.latlng.lat>=d.se.lat&&e.latlng.lng>=d.nw.lng&&e.latlng.lng<=d.se.lng;if(inRange)rebuildAtSelection();else map.panTo(e.latlng)});
 map.on('moveend zoomend',()=>{updateRegionFrame();loadTerrain(map.getCenter(),map.getZoom())});map.whenReady(updateRegionFrame);
 document.querySelector('#center-map').onclick=()=>map.setView([START.lat,START.lng],START.zoom);
-document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);selected={...START};marker.setLatLng([START.lat,START.lng]);camera.position.set(0,82,115);controls.target.set(0,25,0);controls.update();rebuildAtSelection()};
+document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);activeSite=0;selected=sites[0];refreshMarkers();camera.position.set(0,82,115);controls.target.set(0,25,0);controls.update();rebuildAtSelection()};
 
 function tileXY(lat,lng,z){const n=2**z;return{x:(lng+180)/360*n,y:(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n}}
 function latLngFromTile(x,y,z){const n=2**z;return{lng:x/n*360-180,lat:Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI}}
@@ -119,7 +125,7 @@ async function loadTerrain(center,z){
   let vals=raw.map((h,k)=>{if(Number.isFinite(h))return h;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-2);y<=Math.min(N-1,r+2);y++)for(let x=Math.max(0,c-2);x<=Math.min(N-1,c+2);x++){const v=raw[y*N+x];if(Number.isFinite(v))near.push(v)}return near.length?near.reduce((a,b)=>a+b,0)/near.length:0});
   for(let pass=0;pass<2;pass++){const prev=vals;vals=prev.map((h,k)=>{if(h<=.5)return 0;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-1);y<=Math.min(N-1,r+1);y++)for(let x=Math.max(0,c-1);x<=Math.min(N-1,c+1);x++){const v=prev[y*N+x];if(v>.5)near.push(v)}return near.reduce((a,b)=>a+b,0)/near.length})}
   const min=Math.min(...vals),max=Math.max(...vals);
-  const nw=latLngFromTile((c.x*256-halfPx)/256,(c.y*256-halfPx)/256,z),se=latLngFromTile((c.x*256+halfPx)/256,(c.y*256+halfPx)/256,z),data={vals,N,min,max,nw,se};buildTerrain(vals,N,min,max,referenceY(data));terrain.userData=data;updateSelection();document.querySelector('.loading').classList.add('hidden');
+  const nw=latLngFromTile((c.x*256-halfPx)/256,(c.y*256-halfPx)/256,z),se=latLngFromTile((c.x*256+halfPx)/256,(c.y*256+halfPx)/256,z),data={vals,N,min,max,nw,se};buildTerrain(vals,N,min,max,layerPlanes(data));terrain.userData=data;updateSelection();document.querySelector('.loading').classList.add('hidden');
 }
 function surfaceGeometry(vals,N,min,offset=0){const geo=new THREE.PlaneGeometry(120,120,N-1,N-1);geo.rotateX(-Math.PI/2);const pos=geo.attributes.position;for(let i=0;i<pos.count;i++)pos.setY(i,(vals[i]-min)*.42+offset);geo.computeVertexNormals();return geo}
 function solidTerrainGeometry(vals,N){
@@ -134,26 +140,30 @@ function solidTerrainGeometry(vals,N){
   }
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex([...top,...rest]);geo.addGroup(0,top.length,0);geo.addGroup(top.length,rest.length,1);geo.computeVertexNormals();return geo
 }
-function strataMaterial(refY){
-  const cuts=[layers[0].base,(layers[0].base+layers[1].base),(layers[0].base+layers[1].base+layers[2].base)].map(v=>v*.42),colors=layers.map(l=>new THREE.Color(l.color)),earth=new THREE.Color(0xc7c3a6);
-  return new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{uRef:{value:refY},uCut1:{value:cuts[0]},uCut2:{value:cuts[1]},uCut3:{value:cuts[2]},uEarth:{value:earth},uA:{value:colors[0]},uB:{value:colors[1]},uC:{value:colors[2]},uD:{value:colors[3]}},vertexShader:`varying float vY;varying vec3 vN;void main(){vY=position.y;vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`uniform float uRef,uCut1,uCut2,uCut3;uniform vec3 uEarth,uA,uB,uC,uD;varying float vY;varying vec3 vN;void main(){float d=uRef-vY;vec3 c=d<0.0?uEarth:(d<uCut1?uA:(d<uCut2?uB:(d<uCut3?uC:uD)));float light=.62+.38*abs(dot(normalize(vN),normalize(vec3(-.4,.8,.5))));gl_FragColor=vec4(c*light,1.0);}`})
+function sampleSite(d,site){const ix=Math.max(0,Math.min(d.N-1,Math.round((site.lng-d.nw.lng)/(d.se.lng-d.nw.lng)*(d.N-1)))),iy=Math.max(0,Math.min(d.N-1,Math.round((d.nw.lat-site.lat)/(d.nw.lat-d.se.lat)*(d.N-1))));return{ix,iy,x:(ix/(d.N-1)-.5)*120,z:(iy/(d.N-1)-.5)*120,elevation:d.vals[iy*d.N+ix]||0}}
+function planeThrough(points){const m=new THREE.Matrix3().set(points[0].x,points[0].z,1,points[1].x,points[1].z,1,points[2].x,points[2].z,1);if(Math.abs(m.determinant())<.0001)return new THREE.Vector3(0,0,points.reduce((v,p)=>v+p.y,0)/3);return new THREE.Vector3(points[0].y,points[1].y,points[2].y).applyMatrix3(m.invert())}
+function layerPlanes(d){const samples=sites.map(s=>sampleSite(d,s)),planes=[];for(let boundary=0;boundary<5;boundary++){planes.push(planeThrough(samples.map((p,i)=>({x:p.x,z:p.z,y:(p.elevation-sites[i].depths.slice(0,boundary).reduce((a,b)=>a+b,0))*.42}))))}return planes}
+function strataMaterial(planes){
+  const colors=layers.map(l=>new THREE.Color(l.color)),earth=new THREE.Color(0xc7c3a6);
+  return new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{uP0:{value:planes[0]},uP1:{value:planes[1]},uP2:{value:planes[2]},uP3:{value:planes[3]},uP4:{value:planes[4]},uEarth:{value:earth},uA:{value:colors[0]},uB:{value:colors[1]},uC:{value:colors[2]},uD:{value:colors[3]}},vertexShader:`varying float vY;varying vec2 vXZ;varying vec3 vN;void main(){vY=position.y;vXZ=position.xz;vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`uniform vec3 uP0,uP1,uP2,uP3,uP4;uniform vec3 uEarth,uA,uB,uC,uD;varying float vY;varying vec2 vXZ;varying vec3 vN;float level(vec3 p){return p.x*vXZ.x+p.y*vXZ.y+p.z;}void main(){vec3 c=vY>level(uP0)?uEarth:(vY>level(uP1)?uA:(vY>level(uP2)?uB:(vY>level(uP3)?uC:(vY>level(uP4)?uD:uEarth))));float light=.62+.38*abs(dot(normalize(vN),normalize(vec3(-.4,.8,.5))));gl_FragColor=vec4(c*light,1.0);}`})
 }
-function buildTerrain(vals,N,min,max,refY){
+function buildTerrain(vals,N,min,max,planes){
   if(terrain){scene.remove(terrain);terrain.geometry.dispose();(Array.isArray(terrain.material)?terrain.material:[terrain.material]).forEach(m=>m.dispose())}if(strataGroup){scene.remove(strataGroup);strataGroup.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose())})}
   const geo=solidTerrainGeometry(vals,N),earth1=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,side:THREE.DoubleSide}),earth2=earth1.clone();terrain=new THREE.Mesh(geo.clone(),[earth1,earth2]);terrain.receiveShadow=terrain.castShadow=true;scene.add(terrain);
-  const bands=strataMaterial(refY),mesh=new THREE.Mesh(geo,[bands,bands]);mesh.castShadow=mesh.receiveShadow=true;strataGroup=new THREE.Group();strataGroup.add(mesh);scene.add(strataGroup);
+  const bands=strataMaterial(planes),mesh=new THREE.Mesh(geo,[bands,bands]);mesh.castShadow=mesh.receiveShadow=true;strataGroup=new THREE.Group();strataGroup.add(mesh);scene.add(strataGroup);
 }
-function selectionCell(d){const ix=Math.max(0,Math.min(d.N-1,Math.round((selected.lng-d.nw.lng)/(d.se.lng-d.nw.lng)*(d.N-1)))),iy=Math.max(0,Math.min(d.N-1,Math.round((d.nw.lat-selected.lat)/(d.nw.lat-d.se.lat)*(d.N-1))));return{ix,iy}}
-function referenceY(d){const {ix,iy}=selectionCell(d);return(d.vals[iy*d.N+ix]||0)*.42}
-function rebuildAtSelection(){if(!terrain?.userData)return;const d=terrain.userData;buildTerrain(d.vals,d.N,d.min,d.max,referenceY(d));terrain.userData=d;updateSelection()}
-function localDepths(){return layers.map(l=>l.base)}
+function selectionCell(d){const p=sampleSite(d,sites[activeSite]);return{ix:p.ix,iy:p.iy}}
+function referenceY(d){return sampleSite(d,sites[activeSite]).elevation*.42}
+function rebuildAtSelection(){if(!terrain?.userData)return;const d=terrain.userData;buildTerrain(d.vals,d.N,d.min,d.max,layerPlanes(d));terrain.userData=d;updateSelection()}
+function localDepths(){return sites[activeSite].depths}
 function updateSelection(){
-  const ds=localDepths(),total=ds.reduce((a,b)=>a+b,0);document.querySelector('#coords').textContent=`${selected.lat.toFixed(6)}, ${selected.lng.toFixed(6)}`;document.querySelector('#place-label').textContent=selected.lat>34.39&&selected.lat<34.46&&selected.lng>134.02&&selected.lng<134.09?'男木島・香川県':'選択地点';const axis=document.querySelector('#depth-axis');axis.innerHTML='';for(let i=0;i<=5;i++){const d=total*i/5;axis.insertAdjacentHTML('beforeend',`<span>${i===0?'GL ±0 m':`−${Number.isInteger(d)?d.toFixed(0):d.toFixed(1)}${i===5?' m':''}`}</span>`)}
+  const ds=localDepths(),total=ds.reduce((a,b)=>a+b,0);document.querySelector('#coords').textContent=`${selected.lat.toFixed(6)}, ${selected.lng.toFixed(6)}`;document.querySelector('#borehole-title').textContent=`${sites[activeSite].id}地点の地質柱状図`;document.querySelector('#place-label').textContent=selected.lat>34.39&&selected.lat<34.46&&selected.lng>134.02&&selected.lng<134.09?'男木島・香川県':'選択地点';const axis=document.querySelector('#depth-axis');axis.innerHTML='';for(let i=0;i<=5;i++){const d=total*i/5;axis.insertAdjacentHTML('beforeend',`<span>${i===0?'GL ±0 m':`−${Number.isInteger(d)?d.toFixed(0):d.toFixed(1)}${i===5?' m':''}`}</span>`)}
   const col=document.querySelector('#column'),det=document.querySelector('#layer-details');col.innerHTML='';det.innerHTML='';let cumulative=0;
-  layers.forEach((l,i)=>{const d=ds[i],pct=d/total*100,start=cumulative;cumulative+=d;col.insertAdjacentHTML('beforeend',`<div class="column-layer" data-layer="${i}" style="height:${pct}%;background:${l.color}">${l.id}</div>`);det.insertAdjacentHTML('beforeend',`<div class="detail" style="min-height:${Math.max(62,pct*3.3)}px"><span class="swatch" style="background:${l.color}"></span><div class="layer-edit"><div class="detail-copy"><b>地層 ${l.id}</b><p>${l.name} — ${l.desc}</p><code>${Math.round(start)}–${Math.round(cumulative)}m</code></div><label><input class="depth-input" data-layer="${i}" type="number" min="1" max="100" step="1" value="${l.base}" aria-label="地層${l.id}の深さ"> m</label></div></div>`)});
-  if(terrain?.userData?.vals){const {vals,N,min}=terrain.userData,{ix,iy}=selectionCell(terrain.userData);elevationAtPoint=vals[iy*N+ix]||min;document.querySelector('#elevation').textContent=`基準0 m（標高 ${elevationAtPoint.toFixed(1)} m）`;const x=(ix/(N-1)-.5)*120,z=(iy/(N-1)-.5)*120,y=elevationAtPoint*.42;if(pin)scene.remove(pin);pin=new THREE.Group();const totalDepth=layers.reduce((s,l)=>s+l.base,0),depthUnits=totalDepth*.42;const line=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,depthUnits+3,8),new THREE.MeshBasicMaterial({color:0xdf6a3a}));line.position.y=y-depthUnits/2;const head=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,16),new THREE.MeshBasicMaterial({color:0xdf6a3a}));head.position.y=y+1.5;pin.add(line,head);pin.position.set(x,0,z);scene.add(pin)}
+  layers.forEach((l,i)=>{const d=ds[i],pct=d/total*100,start=cumulative;cumulative+=d;col.insertAdjacentHTML('beforeend',`<div class="column-layer" data-layer="${i}" style="height:${pct}%;background:${l.color}">${l.id}</div>`);det.insertAdjacentHTML('beforeend',`<div class="detail" style="min-height:${Math.max(62,pct*3.3)}px"><span class="swatch" style="background:${l.color}"></span><div class="layer-edit"><div class="detail-copy"><b>地層 ${l.id}</b><p>${l.name} — ${l.desc}</p><code>${Math.round(start)}–${Math.round(cumulative)}m</code></div><label><input class="depth-input" data-layer="${i}" type="number" min="1" max="100" step="1" value="${sites[activeSite].depths[i]}" aria-label="地層${l.id}の深さ"> m</label></div></div>`)});
+  if(terrain?.userData?.vals){const {vals,N,min}=terrain.userData,{ix,iy}=selectionCell(terrain.userData);elevationAtPoint=vals[iy*N+ix]||min;document.querySelector('#elevation').textContent=`基準0 m（標高 ${elevationAtPoint.toFixed(1)} m）`;const x=(ix/(N-1)-.5)*120,z=(iy/(N-1)-.5)*120,y=elevationAtPoint*.42;if(pin)scene.remove(pin);pin=new THREE.Group();const totalDepth=sites[activeSite].depths.reduce((a,b)=>a+b,0),depthUnits=totalDepth*.42;const line=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,depthUnits+3,8),new THREE.MeshBasicMaterial({color:0xdf6a3a}));line.position.y=y-depthUnits/2;const head=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,16),new THREE.MeshBasicMaterial({color:0xdf6a3a}));head.position.y=y+1.5;pin.add(line,head);pin.position.set(x,0,z);scene.add(pin)}
 }
-document.querySelector('#layer-details').addEventListener('change',e=>{if(e.target.classList.contains('depth-input')){const i=+e.target.dataset.layer;layers[i].base=Math.max(1,Math.min(100,+e.target.value||1));if(terrain?.userData?.vals){rebuildAtSelection()}}});
+document.querySelector('#layer-details').addEventListener('change',e=>{if(e.target.classList.contains('depth-input')){const i=+e.target.dataset.layer;sites[activeSite].depths[i]=Math.max(1,Math.min(100,+e.target.value||1));if(terrain?.userData?.vals){rebuildAtSelection()}}});
+document.querySelectorAll('.site-tab').forEach(btn=>btn.addEventListener('click',()=>{activeSite=+btn.dataset.site;selected=sites[activeSite];document.querySelectorAll('.site-tab').forEach((b,i)=>b.classList.toggle('active',i===activeSite));refreshMarkers();const d=terrain?.userData,inRange=d&&selected.lat<=d.nw.lat&&selected.lat>=d.se.lat&&selected.lng>=d.nw.lng&&selected.lng<=d.se.lng;if(inRange)updateSelection();else map.panTo([selected.lat,selected.lng])}));
 document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));b.classList.add('active');const show=b.dataset.mode==='strata';if(strataGroup)strataGroup.visible=show;if(terrain)terrain.visible=!show;if(pin)pin.visible=show});
 function resize(){const el=document.querySelector('#scene');renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)}animate();loadTerrain(map.getCenter(),START.zoom);
