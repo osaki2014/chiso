@@ -41,7 +41,7 @@
         <div class="map-wrap">
           <div id="map"></div>
           <div class="crosshair"><i></i><i></i></div>
-          <div class="map-scale-note">表示領域 1024 × 1024 px</div>
+          <div class="map-scale-note">3D対象領域 512 × 512 px</div>
         </div>
       </article>
 
@@ -93,25 +93,26 @@ const layers=[
   {id:'C',name:'凝灰岩層',desc:'風化凝灰岩',color:'#72a89b',base:14,width:100},
   {id:'D',name:'基盤岩',desc:'花崗岩類',color:'#596d87',base:16,width:100}
 ];
-let selected={...START}, terrain, strataGroup, pin, elevationAtPoint=0;
+let selected={...START}, terrain, strataGroup, pin, elevationAtPoint=0, regionFrame;
 
 const map=L.map('map',{zoomControl:false,attributionControl:true}).setView([START.lat,START.lng],START.zoom);
 L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/">国土地理院</a>'}).addTo(map);
 L.control.zoom({position:'bottomright'}).addTo(map);
 const icon=L.divIcon({className:'',html:'<div class="survey-marker"></div>',iconSize:[22,22],iconAnchor:[11,11]});
 const marker=L.marker([START.lat,START.lng],{icon}).addTo(map);
-map.on('click',e=>{selected={lat:e.latlng.lat,lng:e.latlng.lng};marker.setLatLng(e.latlng);updateSelection();});
-map.on('moveend zoomend',()=>loadTerrain(map.getCenter(),map.getZoom()));
+function updateRegionFrame(){const size=map.getSize(),c=L.point(size.x/2,size.y/2),half=256,bounds=L.latLngBounds(map.containerPointToLatLng([c.x-half,c.y+half]),map.containerPointToLatLng([c.x+half,c.y-half]));if(regionFrame)regionFrame.setBounds(bounds);else regionFrame=L.rectangle(bounds,{color:'#df6a3a',weight:2,opacity:.95,fillColor:'#df6a3a',fillOpacity:.035,dashArray:'7 5',interactive:false}).addTo(map)}
+map.on('click',e=>{selected={lat:e.latlng.lat,lng:e.latlng.lng};marker.setLatLng(e.latlng);const d=terrain?.userData,inRange=d&&e.latlng.lat<=d.nw.lat&&e.latlng.lat>=d.se.lat&&e.latlng.lng>=d.nw.lng&&e.latlng.lng<=d.se.lng;if(inRange)updateSelection();else map.panTo(e.latlng)});
+map.on('moveend zoomend',()=>{updateRegionFrame();loadTerrain(map.getCenter(),map.getZoom())});map.whenReady(updateRegionFrame);
 document.querySelector('#center-map').onclick=()=>map.setView([START.lat,START.lng],START.zoom);
-document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);selected={...START};marker.setLatLng([START.lat,START.lng]);camera.position.set(90,75,100);controls.target.set(0,-12,0);controls.update();updateSelection()};
+document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);selected={...START};marker.setLatLng([START.lat,START.lng]);camera.position.set(0,82,115);controls.target.set(0,-12,0);controls.update();updateSelection()};
 
 function tileXY(lat,lng,z){const n=2**z;return{x:(lng+180)/360*n,y:(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n}}
 function latLngFromTile(x,y,z){const n=2**z;return{lng:x/n*360-180,lat:Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI}}
 async function loadTile(x,y,z){return new Promise(resolve=>{const img=new Image();img.crossOrigin='anonymous';img.onload=()=>{const c=document.createElement('canvas');c.width=c.height=256;const ctx=c.getContext('2d');ctx.drawImage(img,0,0);resolve(ctx.getImageData(0,0,256,256).data)};img.onerror=()=>resolve(null);img.src=`https://cyberjapandata.gsi.go.jp/xyz/dem_png/${z}/${x}/${y}.png`})}
-function decode(data,i){if(!data)return 0;const v=data[i]*65536+data[i+1]*256+data[i+2];if(v===8388608)return 0;return v<8388608?v*.01:(v-16777216)*.01}
+function decode(data,i){if(!data||data[i+3]===0)return NaN;const v=data[i]*65536+data[i+1]*256+data[i+2];if(v===8388608)return NaN;return v<8388608?v*.01:(v-16777216)*.01}
 
 const scene=new THREE.Scene();scene.fog=new THREE.Fog(0xe7e7df,170,350);
-const camera=new THREE.PerspectiveCamera(36,1,.1,1000);camera.position.set(90,75,100);
+const camera=new THREE.PerspectiveCamera(36,1,.1,1000);camera.position.set(0,82,115);
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;document.querySelector('#scene').appendChild(renderer.domElement);
 const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.target.set(0,-12,0);controls.maxPolarAngle=Math.PI*.49;controls.minDistance=60;controls.maxDistance=260;
 scene.add(new THREE.HemisphereLight(0xffffff,0x67706d,2));const sun=new THREE.DirectionalLight(0xfff4dc,2.5);sun.position.set(-60,100,70);sun.castShadow=true;scene.add(sun);
@@ -119,10 +120,13 @@ const grid=new THREE.GridHelper(220,11,0x9da19b,0xc9cbc4);grid.position.y=-52;sc
 
 async function loadTerrain(center,z){
   document.querySelector('.loading').classList.remove('hidden');const viewZ=Math.min(18,Math.max(8,z));z=Math.min(14,viewZ);
-  const c=tileXY(center.lat,center.lng,z), halfPx=512/2**(viewZ-z), minX=Math.floor((c.x*256-halfPx)/256),maxX=Math.floor((c.x*256+halfPx)/256),minY=Math.floor((c.y*256-halfPx)/256),maxY=Math.floor((c.y*256+halfPx)/256);
+  const c=tileXY(center.lat,center.lng,z), halfPx=256/2**(viewZ-z), minX=Math.floor((c.x*256-halfPx)/256),maxX=Math.floor((c.x*256+halfPx)/256),minY=Math.floor((c.y*256-halfPx)/256),maxY=Math.floor((c.y*256+halfPx)/256);
   const tiles=new Map();await Promise.all(Array.from({length:maxX-minX+1},(_,ix)=>Array.from({length:maxY-minY+1},(_,iy)=>{const x=minX+ix,y=minY+iy;return loadTile(x,y,z).then(d=>tiles.set(`${x}/${y}`,d))})).flat());
-  const N=65, vals=[];let min=Infinity,max=-Infinity;
-  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const px=c.x*256-halfPx+i/(N-1)*1024,py=c.y*256-halfPx+j/(N-1)*1024,tx=Math.floor(px/256),ty=Math.floor(py/256),lx=Math.floor(px-tx*256),ly=Math.floor(py-ty*256);let h=decode(tiles.get(`${tx}/${ty}`),(ly*256+lx)*4);if(!Number.isFinite(h))h=0;vals.push(h);if(h<min)min=h;if(h>max)max=h}
+  const N=65, raw=[];
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const px=c.x*256-halfPx+i/(N-1)*halfPx*2,py=c.y*256-halfPx+j/(N-1)*halfPx*2,tx=Math.floor(px/256),ty=Math.floor(py/256),lx=Math.max(0,Math.min(255,Math.floor(px-tx*256))),ly=Math.max(0,Math.min(255,Math.floor(py-ty*256)));raw.push(decode(tiles.get(`${tx}/${ty}`),(ly*256+lx)*4))}
+  let vals=raw.map((h,k)=>{if(Number.isFinite(h))return h;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-2);y<=Math.min(N-1,r+2);y++)for(let x=Math.max(0,c-2);x<=Math.min(N-1,c+2);x++){const v=raw[y*N+x];if(Number.isFinite(v))near.push(v)}return near.length?near.reduce((a,b)=>a+b,0)/near.length:0});
+  for(let pass=0;pass<2;pass++){const prev=vals;vals=prev.map((h,k)=>{if(h<=.5)return 0;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-1);y<=Math.min(N-1,r+1);y++)for(let x=Math.max(0,c-1);x<=Math.min(N-1,c+1);x++){const v=prev[y*N+x];if(v>.5)near.push(v)}return near.reduce((a,b)=>a+b,0)/near.length})}
+  const min=Math.min(...vals),max=Math.max(...vals);
   buildTerrain(vals,N,min,max);const nw=latLngFromTile((c.x*256-halfPx)/256,(c.y*256-halfPx)/256,z),se=latLngFromTile((c.x*256+halfPx)/256,(c.y*256+halfPx)/256,z);terrain.userData={vals,N,min,max,nw,se};updateSelection();document.querySelector('.loading').classList.add('hidden');
 }
 function surfaceGeometry(vals,N,min,offset=0){const geo=new THREE.PlaneGeometry(120,120,N-1,N-1);geo.rotateX(-Math.PI/2);const pos=geo.attributes.position;for(let i=0;i<pos.count;i++)pos.setY(i,(vals[i]-min)*.42+offset);geo.computeVertexNormals();return geo}
@@ -139,7 +143,7 @@ function volumeGeometry(vals,N,min,topDepth,bottomDepth){
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex([...top,...rest]);geo.addGroup(0,top.length,0);geo.addGroup(top.length,rest.length,1);geo.computeVertexNormals();return geo
 }
 function buildTerrain(vals,N,min,max){
-  if(terrain){scene.remove(terrain);terrain.geometry.dispose();terrain.material.dispose()}if(strataGroup)scene.remove(strataGroup);
+  if(terrain){scene.remove(terrain);terrain.geometry.dispose();(Array.isArray(terrain.material)?terrain.material:[terrain.material]).forEach(m=>m.dispose())}if(strataGroup){scene.remove(strataGroup);strataGroup.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose())})}
   const earth=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,side:THREE.DoubleSide});terrain=new THREE.Mesh(volumeGeometry(vals,N,min,0,1),[earth,earth]);terrain.receiveShadow=terrain.castShadow=true;terrain.visible=false;scene.add(terrain);
   strataGroup=new THREE.Group();let depth=0;
   layers.forEach((l,idx)=>{const bottom=depth+l.base,g=volumeGeometry(vals,N,min,depth,bottom),m=new THREE.MeshStandardMaterial({color:l.color,roughness:.88,metalness:0,side:THREE.DoubleSide});const mesh=new THREE.Mesh(g,[idx===0?earth:m,m]);mesh.castShadow=mesh.receiveShadow=true;mesh.userData.layer=idx;strataGroup.add(mesh);depth=bottom});scene.add(strataGroup);
