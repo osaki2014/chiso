@@ -127,17 +127,22 @@ async function loadTerrain(center,z){
 }
 function surfaceGeometry(vals,N,min,offset=0){const geo=new THREE.PlaneGeometry(120,120,N-1,N-1);geo.rotateX(-Math.PI/2);const pos=geo.attributes.position;for(let i=0;i<pos.count;i++)pos.setY(i,(vals[i]-min)*.42+offset);geo.computeVertexNormals();return geo}
 function volumeGeometry(vals,N,min,topDepth,bottomDepth){
-  const positions=[],top=[],rest=[],scale=.9,idx=(r,c,b=0)=>b*N*N+r*N+c;
+  const positions=[],top=[],rest=[],scale=.9,idx=(r,c,b=0)=>b*N*N+r*N+c,threshold=Math.max(.5,min+.5);
   for(let b=0;b<2;b++)for(let r=0;r<N;r++)for(let c=0;c<N;c++){const k=r*N+c;positions.push((c/(N-1)-.5)*120,(vals[k]-min)*.42-(b?bottomDepth:topDepth)*scale,(r/(N-1)-.5)*120)}
-  for(let r=0;r<N-1;r++)for(let c=0;c<N-1;c++){const a=idx(r,c),b=idx(r,c+1),d=idx(r+1,c),e=idx(r+1,c+1);top.push(a,d,b,b,d,e);const A=a+N*N,B=b+N*N,D=d+N*N,E=e+N*N;rest.push(A,B,D,B,E,D)}
-  const edge=[];for(let c=0;c<N-1;c++)edge.push([idx(0,c),idx(0,c+1)],[idx(N-1,c+1),idx(N-1,c)]);for(let r=0;r<N-1;r++)edge.push([idx(r+1,0),idx(r,0)],[idx(r,N-1),idx(r+1,N-1)]);edge.forEach(([a,b])=>{const A=a+N*N,B=b+N*N;rest.push(a,b,A,b,B,A)});
+  const active=(r,c)=>r>=0&&c>=0&&r<N-1&&c<N-1&&vals[r*N+c]>threshold&&vals[r*N+c+1]>threshold&&vals[(r+1)*N+c]>threshold&&vals[(r+1)*N+c+1]>threshold;
+  const wall=(a,b)=>{const A=a+N*N,B=b+N*N;rest.push(a,b,A,b,B,A)};
+  for(let r=0;r<N-1;r++)for(let c=0;c<N-1;c++)if(active(r,c)){
+    const a=idx(r,c),b=idx(r,c+1),d=idx(r+1,c),e=idx(r+1,c+1),A=a+N*N,B=b+N*N,D=d+N*N,E=e+N*N;
+    top.push(a,d,b,b,d,e);rest.push(A,B,D,B,E,D);
+    if(!active(r-1,c))wall(a,b);if(!active(r+1,c))wall(e,d);if(!active(r,c-1))wall(d,a);if(!active(r,c+1))wall(b,e);
+  }
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex([...top,...rest]);geo.addGroup(0,top.length,0);geo.addGroup(top.length,rest.length,1);geo.computeVertexNormals();return geo
 }
 function buildTerrain(vals,N,min,max){
   if(terrain){scene.remove(terrain);terrain.geometry.dispose();terrain.material.dispose()}if(strataGroup)scene.remove(strataGroup);
-  terrain=new THREE.Mesh(surfaceGeometry(vals,N,min,0),new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,metalness:0,side:THREE.DoubleSide}));terrain.receiveShadow=terrain.castShadow=true;terrain.visible=false;scene.add(terrain);
-  strataGroup=new THREE.Group();let depth=0;const earth=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92});
-  layers.forEach((l,idx)=>{const bottom=depth+l.base,g=volumeGeometry(vals,N,min,depth,bottom),m=new THREE.MeshStandardMaterial({color:l.color,roughness:.88,metalness:0});const mesh=new THREE.Mesh(g,[idx===0?earth:m,m]);mesh.castShadow=mesh.receiveShadow=true;mesh.userData.layer=idx;strataGroup.add(mesh);depth=bottom});scene.add(strataGroup);
+  const earth=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,side:THREE.DoubleSide});terrain=new THREE.Mesh(volumeGeometry(vals,N,min,0,1),[earth,earth]);terrain.receiveShadow=terrain.castShadow=true;terrain.visible=false;scene.add(terrain);
+  strataGroup=new THREE.Group();let depth=0;
+  layers.forEach((l,idx)=>{const bottom=depth+l.base,g=volumeGeometry(vals,N,min,depth,bottom),m=new THREE.MeshStandardMaterial({color:l.color,roughness:.88,metalness:0,side:THREE.DoubleSide});const mesh=new THREE.Mesh(g,[idx===0?earth:m,m]);mesh.castShadow=mesh.receiveShadow=true;mesh.userData.layer=idx;strataGroup.add(mesh);depth=bottom});scene.add(strataGroup);
 }
 function localDepths(){return layers.map(l=>l.base)}
 function updateSelection(){
