@@ -101,10 +101,10 @@ L.control.zoom({position:'bottomright'}).addTo(map);
 const icon=L.divIcon({className:'',html:'<div class="survey-marker"></div>',iconSize:[22,22],iconAnchor:[11,11]});
 const marker=L.marker([START.lat,START.lng],{icon}).addTo(map);
 function updateRegionFrame(){const size=map.getSize(),c=L.point(size.x/2,size.y/2),half=256,bounds=L.latLngBounds(map.containerPointToLatLng([c.x-half,c.y+half]),map.containerPointToLatLng([c.x+half,c.y-half]));if(regionFrame)regionFrame.setBounds(bounds);else regionFrame=L.rectangle(bounds,{color:'#df6a3a',weight:2,opacity:.95,fillColor:'#df6a3a',fillOpacity:.035,dashArray:'7 5',interactive:false}).addTo(map)}
-map.on('click',e=>{selected={lat:e.latlng.lat,lng:e.latlng.lng};marker.setLatLng(e.latlng);const d=terrain?.userData,inRange=d&&e.latlng.lat<=d.nw.lat&&e.latlng.lat>=d.se.lat&&e.latlng.lng>=d.nw.lng&&e.latlng.lng<=d.se.lng;if(inRange)updateSelection();else map.panTo(e.latlng)});
+map.on('click',e=>{selected={lat:e.latlng.lat,lng:e.latlng.lng};marker.setLatLng(e.latlng);const d=terrain?.userData,inRange=d&&e.latlng.lat<=d.nw.lat&&e.latlng.lat>=d.se.lat&&e.latlng.lng>=d.nw.lng&&e.latlng.lng<=d.se.lng;if(inRange)rebuildAtSelection();else map.panTo(e.latlng)});
 map.on('moveend zoomend',()=>{updateRegionFrame();loadTerrain(map.getCenter(),map.getZoom())});map.whenReady(updateRegionFrame);
 document.querySelector('#center-map').onclick=()=>map.setView([START.lat,START.lng],START.zoom);
-document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);selected={...START};marker.setLatLng([START.lat,START.lng]);camera.position.set(0,82,115);controls.target.set(0,-12,0);controls.update();updateSelection()};
+document.querySelector('#reset-view').onclick=()=>{map.setView([START.lat,START.lng],START.zoom);selected={...START};marker.setLatLng([START.lat,START.lng]);camera.position.set(0,82,115);controls.target.set(0,-12,0);controls.update();rebuildAtSelection()};
 
 function tileXY(lat,lng,z){const n=2**z;return{x:(lng+180)/360*n,y:(1-Math.asinh(Math.tan(lat*Math.PI/180))/Math.PI)/2*n}}
 function latLngFromTile(x,y,z){const n=2**z;return{lng:x/n*360-180,lat:Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI}}
@@ -127,37 +127,42 @@ async function loadTerrain(center,z){
   let vals=raw.map((h,k)=>{if(Number.isFinite(h))return h;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-2);y<=Math.min(N-1,r+2);y++)for(let x=Math.max(0,c-2);x<=Math.min(N-1,c+2);x++){const v=raw[y*N+x];if(Number.isFinite(v))near.push(v)}return near.length?near.reduce((a,b)=>a+b,0)/near.length:0});
   for(let pass=0;pass<2;pass++){const prev=vals;vals=prev.map((h,k)=>{if(h<=.5)return 0;const r=Math.floor(k/N),c=k%N,near=[];for(let y=Math.max(0,r-1);y<=Math.min(N-1,r+1);y++)for(let x=Math.max(0,c-1);x<=Math.min(N-1,c+1);x++){const v=prev[y*N+x];if(v>.5)near.push(v)}return near.reduce((a,b)=>a+b,0)/near.length})}
   const min=Math.min(...vals),max=Math.max(...vals);
-  buildTerrain(vals,N,min,max);const nw=latLngFromTile((c.x*256-halfPx)/256,(c.y*256-halfPx)/256,z),se=latLngFromTile((c.x*256+halfPx)/256,(c.y*256+halfPx)/256,z);terrain.userData={vals,N,min,max,nw,se};updateSelection();document.querySelector('.loading').classList.add('hidden');
+  const nw=latLngFromTile((c.x*256-halfPx)/256,(c.y*256-halfPx)/256,z),se=latLngFromTile((c.x*256+halfPx)/256,(c.y*256+halfPx)/256,z),data={vals,N,min,max,nw,se};buildTerrain(vals,N,min,max,referenceY(data));terrain.userData=data;updateSelection();document.querySelector('.loading').classList.add('hidden');
 }
 function surfaceGeometry(vals,N,min,offset=0){const geo=new THREE.PlaneGeometry(120,120,N-1,N-1);geo.rotateX(-Math.PI/2);const pos=geo.attributes.position;for(let i=0;i<pos.count;i++)pos.setY(i,(vals[i]-min)*.42+offset);geo.computeVertexNormals();return geo}
-function volumeGeometry(vals,N,min,topDepth,bottomDepth){
-  const positions=[],top=[],rest=[],scale=.9,idx=(r,c,b=0)=>b*N*N+r*N+c,threshold=Math.max(.5,min+.5);
-  for(let b=0;b<2;b++)for(let r=0;r<N;r++)for(let c=0;c<N;c++){const k=r*N+c;positions.push((c/(N-1)-.5)*120,(vals[k]-min)*.42-(b?bottomDepth:topDepth)*scale,(r/(N-1)-.5)*120)}
-  const active=(r,c)=>r>=0&&c>=0&&r<N-1&&c<N-1&&vals[r*N+c]>threshold&&vals[r*N+c+1]>threshold&&vals[(r+1)*N+c]>threshold&&vals[(r+1)*N+c+1]>threshold;
+function volumeGeometry(vals,N,min,topDepth,bottomDepth,reference,overburden=false){
+  const positions=[],top=[],rest=[],depthScale=.42,heightScale=.42,idx=(r,c,b=0)=>b*N*N+r*N+c,threshold=Math.max(.5,min+.5),ys=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){const k=r*N+c,surface=(vals[k]-min)*heightScale;let topY,bottomY;if(overburden){topY=surface;bottomY=Math.min(surface,reference)}else{topY=Math.min(surface,reference-topDepth*depthScale);bottomY=Math.min(surface,reference-bottomDepth*depthScale)}ys.push([topY,bottomY]);positions.push((c/(N-1)-.5)*120,topY,(r/(N-1)-.5)*120)}
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){const k=r*N+c;positions.push((c/(N-1)-.5)*120,ys[k][1],(r/(N-1)-.5)*120)}
+  const land=(r,c)=>r>=0&&c>=0&&r<N-1&&c<N-1&&vals[r*N+c]>threshold&&vals[r*N+c+1]>threshold&&vals[(r+1)*N+c]>threshold&&vals[(r+1)*N+c+1]>threshold;
+  const active=(r,c)=>land(r,c)&&[r*N+c,r*N+c+1,(r+1)*N+c,(r+1)*N+c+1].some(k=>ys[k][0]-ys[k][1]>.01);
   const wall=(a,b)=>{const A=a+N*N,B=b+N*N;rest.push(a,b,A,b,B,A)};
-  for(let r=0;r<N-1;r++)for(let c=0;c<N-1;c++)if(active(r,c)){
+  for(let r=0;r<N-1;r++)for(let c=0;c<N-1;c++)if(active(r,c)||overburden&&land(r,c)){
     const a=idx(r,c),b=idx(r,c+1),d=idx(r+1,c),e=idx(r+1,c+1),A=a+N*N,B=b+N*N,D=d+N*N,E=e+N*N;
-    top.push(a,d,b,b,d,e);rest.push(A,B,D,B,E,D);
-    if(!active(r-1,c))wall(a,b);if(!active(r+1,c))wall(e,d);if(!active(r,c-1))wall(d,a);if(!active(r,c+1))wall(b,e);
+    top.push(a,d,b,b,d,e);if(active(r,c))rest.push(A,B,D,B,E,D);
+    if(!land(r-1,c))wall(a,b);if(!land(r+1,c))wall(e,d);if(!land(r,c-1))wall(d,a);if(!land(r,c+1))wall(b,e);
   }
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geo.setIndex([...top,...rest]);geo.addGroup(0,top.length,0);geo.addGroup(top.length,rest.length,1);geo.computeVertexNormals();return geo
 }
-function buildTerrain(vals,N,min,max){
+function buildTerrain(vals,N,min,max,refY){
   if(terrain){scene.remove(terrain);terrain.geometry.dispose();(Array.isArray(terrain.material)?terrain.material:[terrain.material]).forEach(m=>m.dispose())}if(strataGroup){scene.remove(strataGroup);strataGroup.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose())})}
-  const earth=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,side:THREE.DoubleSide});terrain=new THREE.Mesh(volumeGeometry(vals,N,min,0,1),[earth,earth]);terrain.receiveShadow=terrain.castShadow=true;terrain.visible=false;scene.add(terrain);
+  const earth=new THREE.MeshStandardMaterial({color:0xc7c3a6,roughness:.92,side:THREE.DoubleSide});terrain=new THREE.Mesh(volumeGeometry(vals,N,min,0,0,refY,true),[earth,earth]);terrain.receiveShadow=terrain.castShadow=true;scene.add(terrain);
   strataGroup=new THREE.Group();let depth=0;
-  layers.forEach((l,idx)=>{const bottom=depth+l.base,g=volumeGeometry(vals,N,min,depth,bottom),m=new THREE.MeshStandardMaterial({color:l.color,roughness:.88,metalness:0,side:THREE.DoubleSide});const mesh=new THREE.Mesh(g,[idx===0?earth:m,m]);mesh.castShadow=mesh.receiveShadow=true;mesh.userData.layer=idx;strataGroup.add(mesh);depth=bottom});scene.add(strataGroup);
+  layers.forEach(l=>{const bottom=depth+l.base,g=volumeGeometry(vals,N,min,depth,bottom,refY),m=new THREE.MeshStandardMaterial({color:l.color,roughness:.88,metalness:0,side:THREE.DoubleSide}),mesh=new THREE.Mesh(g,[m,m]);mesh.castShadow=mesh.receiveShadow=true;strataGroup.add(mesh);depth=bottom});scene.add(strataGroup);
 }
+function selectionCell(d){const ix=Math.max(0,Math.min(d.N-1,Math.round((selected.lng-d.nw.lng)/(d.se.lng-d.nw.lng)*(d.N-1)))),iy=Math.max(0,Math.min(d.N-1,Math.round((d.nw.lat-selected.lat)/(d.nw.lat-d.se.lat)*(d.N-1))));return{ix,iy}}
+function referenceY(d){const {ix,iy}=selectionCell(d);return((d.vals[iy*d.N+ix]||d.min)-d.min)*.42}
+function rebuildAtSelection(){if(!terrain?.userData)return;const d=terrain.userData;buildTerrain(d.vals,d.N,d.min,d.max,referenceY(d));terrain.userData=d;updateSelection()}
 function localDepths(){return layers.map(l=>l.base)}
 function updateSelection(){
   const ds=localDepths(),total=ds.reduce((a,b)=>a+b,0);document.querySelector('#coords').textContent=`${selected.lat.toFixed(6)}, ${selected.lng.toFixed(6)}`;
   const col=document.querySelector('#column'),det=document.querySelector('#layer-details');col.innerHTML='';det.innerHTML='';let cumulative=0;
   layers.forEach((l,i)=>{const d=ds[i],pct=d/total*100,start=cumulative;cumulative+=d;col.insertAdjacentHTML('beforeend',`<div class="column-layer" data-layer="${i}" style="height:${pct}%;width:${l.width}%;background:${l.color}">${l.id}</div>`);det.insertAdjacentHTML('beforeend',`<div class="detail" style="min-height:${Math.max(62,pct*3.3)}px"><span class="swatch" style="background:${l.color}"></span><div class="layer-edit"><div class="detail-copy"><b>地層 ${l.id}</b><p>${l.name} — ${l.desc}</p><code>${Math.round(start)}–${Math.round(cumulative)}m</code></div><label><input class="depth-input" data-layer="${i}" type="number" min="1" max="100" step="1" value="${l.base}" aria-label="地層${l.id}の深さ"> m</label><label class="width-control"><input class="width-input" data-layer="${i}" type="range" min="30" max="100" step="1" value="${l.width}" aria-label="地層${l.id}の柱状図幅"><output>${l.width}%</output></label></div></div>`)});
-  if(terrain?.userData?.vals){const {vals,N,nw,se,min}=terrain.userData;const ix=Math.max(0,Math.min(N-1,Math.round((selected.lng-nw.lng)/(se.lng-nw.lng)*(N-1)))),iy=Math.max(0,Math.min(N-1,Math.round((nw.lat-selected.lat)/(nw.lat-se.lat)*(N-1))));elevationAtPoint=vals[iy*N+ix]||min;document.querySelector('#elevation').textContent=`標高 ${elevationAtPoint.toFixed(1)} m`;const x=(ix/(N-1)-.5)*120,z=(iy/(N-1)-.5)*120,y=(elevationAtPoint-min)*.42;if(pin)scene.remove(pin);pin=new THREE.Group();const totalDepth=layers.reduce((s,l)=>s+l.base,0);const line=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,totalDepth*.9+3,8),new THREE.MeshBasicMaterial({color:0xdf6a3a}));line.position.y=y-totalDepth*.45;const head=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,16),new THREE.MeshBasicMaterial({color:0xdf6a3a}));head.position.y=y+1.5;pin.add(line,head);pin.position.set(x,0,z);scene.add(pin)}
+  if(terrain?.userData?.vals){const {vals,N,min}=terrain.userData,{ix,iy}=selectionCell(terrain.userData);elevationAtPoint=vals[iy*N+ix]||min;document.querySelector('#elevation').textContent=`基準0 m（標高 ${elevationAtPoint.toFixed(1)} m）`;const x=(ix/(N-1)-.5)*120,z=(iy/(N-1)-.5)*120,y=(elevationAtPoint-min)*.42;if(pin)scene.remove(pin);pin=new THREE.Group();const totalDepth=layers.reduce((s,l)=>s+l.base,0),depthUnits=totalDepth*.42;const line=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,depthUnits+3,8),new THREE.MeshBasicMaterial({color:0xdf6a3a}));line.position.y=y-depthUnits/2;const head=new THREE.Mesh(new THREE.SphereGeometry(1.3,16,16),new THREE.MeshBasicMaterial({color:0xdf6a3a}));head.position.y=y+1.5;pin.add(line,head);pin.position.set(x,0,z);scene.add(pin)}
 }
 document.querySelector('#layer-details').addEventListener('input',e=>{if(e.target.classList.contains('width-input')){const i=+e.target.dataset.layer;layers[i].width=+e.target.value;e.target.nextElementSibling.value=`${e.target.value}%`;document.querySelector(`.column-layer[data-layer="${i}"]`).style.width=`${e.target.value}%`}});
-document.querySelector('#layer-details').addEventListener('change',e=>{if(e.target.classList.contains('depth-input')){const i=+e.target.dataset.layer;layers[i].base=Math.max(1,Math.min(100,+e.target.value||1));if(terrain?.userData?.vals){const d=terrain.userData;buildTerrain(d.vals,d.N,d.min,d.max);terrain.userData=d;updateSelection()}}});
-document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));b.classList.add('active');const show=b.dataset.mode==='strata';if(strataGroup)strataGroup.visible=show;if(terrain)terrain.visible=!show;if(pin)pin.visible=show});
+document.querySelector('#layer-details').addEventListener('change',e=>{if(e.target.classList.contains('depth-input')){const i=+e.target.dataset.layer;layers[i].base=Math.max(1,Math.min(100,+e.target.value||1));if(terrain?.userData?.vals){rebuildAtSelection()}}});
+document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));b.classList.add('active');const show=b.dataset.mode==='strata';if(strataGroup)strataGroup.visible=show;if(terrain)terrain.visible=true;if(pin)pin.visible=show});
 function resize(){const el=document.querySelector('#scene');renderer.setSize(el.clientWidth,el.clientHeight);camera.aspect=el.clientWidth/el.clientHeight;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)}animate();loadTerrain(map.getCenter(),START.zoom);
 
